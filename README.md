@@ -1,293 +1,165 @@
-# Chamados Internos
+# Internal Helpdesk
 
-Sistema de Controle de Chamados Internos: uma aplicação web onde funcionários
-abrem chamados (problemas e solicitações do dia a dia) e a equipe de suporte
-acompanha, atribui responsáveis e resolve — com **distribuição automática de
-carga** entre os atendentes.
+An internal ticketing system: employees open tickets for day-to-day problems and requests, and the
+support team triages, assigns and resolves them — with **automatic load balancing** across agents.
 
-> Projeto desenvolvido como desafio técnico full stack.
+The interesting part is not the CRUD. It is the routing rule: when a ticket is opened in automatic
+mode, it goes to the agent with the fewest *open* tickets — and deciding what "open" means is a
+business decision that had to be made and defended, not guessed.
 
----
-
-## Sumário
-
-- [Funcionalidades](#funcionalidades)
-- [Stack e justificativas](#stack-e-justificativas)
-- [Decisões de arquitetura](#decisões-de-arquitetura)
-- [Regra de negócio: o que é um chamado "em aberto"](#regra-de-negócio-o-que-é-um-chamado-em-aberto)
-- [Pré-requisitos](#pré-requisitos)
-- [Como rodar o projeto](#como-rodar-o-projeto)
-- [Rodando os testes](#rodando-os-testes)
-- [Dados de exemplo](#dados-de-exemplo)
-- [Estrutura do projeto](#estrutura-do-projeto)
-- [Trade-offs e próximos passos](#trade-offs-e-próximos-passos)
-- [Bibliotecas e referências](#bibliotecas-e-referências)
+*Built as a full stack technical challenge.*
 
 ---
 
-## Funcionalidades
+## Stack, and why each piece
 
-- **CRUD de chamados**: cadastro, edição, listagem e visualização detalhada.
-- **Campos do chamado**: título, descrição, prioridade (baixa, média, alta),
-  status (aberto, em andamento, resolvido, fechado), responsável, solicitante
-  (opcional) e data/hora de abertura.
-- **Responsáveis pelo atendimento**: conjunto de responsáveis já disponíveis
-  (4 cadastrados via seed) que podem ser atribuídos a um chamado.
-- **Distribuição automática**: ao abrir/editar um chamado, é possível deixar o
-  sistema escolher automaticamente o responsável com **menos chamados em aberto**,
-  ou escolher manualmente.
-- **Tela de acompanhamento**: lista com **busca** (título/solicitante),
-  **filtros** (status, prioridade, responsável), **ordenação** por coluna e
-  **paginação**.
-
----
-
-## Stack e justificativas
-
-| Camada | Tecnologia | Por quê |
+| Layer | Technology | Why |
 | --- | --- | --- |
-| Back-end | **Laravel 13** (PHP 8.3+) | Framework maduro e produtivo, com Eloquent, validação e um ecossistema que acelera o desenvolvimento de um time pequeno. |
-| Ponte front/back | **Inertia.js** | Elimina o atrito de construir e versionar uma API REST separada só para o front. As controllers retornam "páginas" e os dados como props — experiência de SPA sem o custo de manter dois projetos. |
-| Front-end | **Vue 3** (`<script setup>`) | Componentização simples e reativa, integrada ao Inertia. |
-| Estilo | **Tailwind CSS v4** | Permite montar uma interface organizada rapidamente, sem CSS customizado e sem reinventar componentes. |
-| Banco | **MySQL 8.4** | Banco relacional robusto, com paridade com produção e bom suporte a acessos concorrentes da equipe de suporte. |
-| Testes | **Pest** | Sintaxe enxuta sobre o PHPUnit; testes legíveis e rápidos (SQLite em memória). |
-| Ambiente | **Laravel Sail (Docker)** | "Roda na máquina de qualquer um do time" com um comando, sem instalar PHP/Composer/MySQL no host. |
+| Backend | **Laravel 13** (PHP 8.3+) | Mature and productive — Eloquent, validation, and an ecosystem that lets a small team move fast. |
+| Front/back bridge | **Inertia.js** | Removes the friction of building and versioning a separate REST API just for the front end. Controllers return "pages" with data as props — an SPA experience without maintaining two projects. |
+| Frontend | **Vue 3** (`<script setup>`) | Simple, reactive components, integrated with Inertia. |
+| Styling | **Tailwind CSS v4** | An organized interface quickly, with no custom CSS and no reinvented components. |
+| Database | **MySQL 8.4** | Relational, production-parity, and good under the concurrent access a support team generates. |
+| Tests | **Pest** | Lean syntax over PHPUnit; readable and fast (in-memory SQLite). |
+| Environment | **Laravel Sail (Docker)** | Runs on anyone's machine with one command, with no PHP/Composer/MySQL installed on the host. |
 
-> **Por que Inertia?** A dica do desafio aponta para "reduzir o atrito entre
-> front e back". Em um time full stack pequeno, manter uma API REST + um SPA
-> separado dobra o trabalho (rotas, serialização, versionamento, autenticação
-> em dois lugares). O Inertia resolve isso mantendo um único monolito Laravel
-> que serve componentes Vue — menos código de cola, mais velocidade de entrega.
+**Why Inertia specifically.** In a small full stack team, maintaining a REST API *and* a separate
+SPA doubles the work — routes, serialization, versioning and authentication in two places. Inertia
+keeps a single Laravel monolith serving Vue components: less glue code, faster delivery.
 
 ---
 
-## Decisões de arquitetura
+## Architecture decisions
 
-O código foi organizado para favorecer manutenção por uma equipe pequena,
-seguindo SOLID e DRY sem sobre-engenharia:
+Organized so a small team can maintain it — SOLID and DRY without over-engineering:
 
-- **Enums de domínio** (`App\Enums\TicketPriority`, `TicketStatus`): os valores
-  válidos de prioridade e status vivem em um único lugar, com segurança de tipo.
-  Cada enum também expõe `options()` para alimentar os selects do front — uma
-  **única fonte de verdade** compartilhada entre banco, back-end e front-end.
+- **Domain enums** (`App\Enums\TicketPriority`, `TicketStatus`) — valid priorities and statuses live
+  in one place, type-safely. Each enum also exposes `options()` to feed the front-end selects, so
+  database, backend and frontend share a **single source of truth**.
 
-- **Action dedicada** (`App\Actions\AssignLeastBusyAgent`): a regra da
-  distribuição automática é isolada em uma classe com responsabilidade única
-  (SRP). Isso a torna testável unitariamente e reaproveitável (ex.: um futuro
-  comando de rebalanceamento em lote), em vez de ficar escondida no controller.
+- **A dedicated Action** (`App\Actions\AssignLeastBusyAgent`) — the auto-assignment rule is isolated
+  in a single-responsibility class. That makes it unit-testable and reusable (a future batch
+  rebalancing command, say) instead of buried in a controller.
 
-- **Form Requests** (`StoreTicketRequest`, `UpdateTicketRequest`): a validação
-  fica fora do controller. O `UpdateTicketRequest` herda do `StoreTicketRequest`
-  (DRY), já que as regras são idênticas.
+- **Form Requests** (`StoreTicketRequest`, `UpdateTicketRequest`) — validation lives outside the
+  controller. `UpdateTicketRequest` extends `StoreTicketRequest`, since the rules are identical.
 
-- **Query Scopes no model** (`Ticket::scopeSearch`, `scopeStatus`, etc.): a
-  lógica de filtro/busca fica no model, deixando o controller fino e legível.
+- **Query scopes on the model** (`Ticket::scopeSearch`, `scopeStatus`, …) — filtering and search stay
+  on the model, keeping the controller thin.
 
-- **API Resource** (`TicketResource`): centraliza a formatação do chamado para o
-  front (inclusive prioridade/status como `{ value, label }`), evitando duplicar
-  a montagem de payload entre listagem e detalhe.
+- **An API Resource** (`TicketResource`) — centralizes how a ticket is shaped for the front end
+  (including priority/status as `{ value, label }`), so the payload isn't assembled twice for the
+  list and the detail view.
 
-- **Controller RESTful enxuto** (`TicketController`): apenas orquestra —
-  delega validação aos Form Requests, filtros aos scopes, a escolha do
-  responsável à Action e a formatação ao Resource.
+- **A lean RESTful controller** (`TicketController`) — it only orchestrates: validation to the Form
+  Requests, filtering to the scopes, agent selection to the Action, formatting to the Resource.
 
-- **Cores na camada de apresentação**: o back-end envia apenas o rótulo; a cor
-  dos badges é decidida no front (a partir do valor estável do enum), mantendo
-  regras de CSS fora do PHP.
+- **Colour lives in the presentation layer** — the backend sends only the label; badge colour is
+  decided on the front end from the enum's stable value, keeping CSS concerns out of PHP.
 
 ---
 
-## Regra de negócio: o que é um chamado "em aberto"
+## The business rule: what counts as an "open" ticket
 
-O desafio pede para definir e justificar o que conta como "em aberto" na
-distribuição automática.
+Auto-assignment routes to whoever has the fewest open tickets, so "open" has to be defined.
 
-**Decisão:** consideramos **em aberto** todo chamado que ainda **não foi
-concluído**, ou seja, com status **Aberto** ou **Em andamento**. Status
-**Resolvido** e **Fechado** são considerados concluídos e **não** entram na
-contagem de carga.
+**Decision:** a ticket counts as open while it is **not yet finished** — status **Open** or **In
+progress**. **Resolved** and **Closed** are finished and do **not** count toward an agent's load.
 
-**Justificativa:** a dor do cliente é equilibrar o trabalho _ativo_ entre os
-atendentes. Um chamado resolvido/fechado não consome mais tempo de ninguém,
-portanto não deveria pesar na decisão de para quem enviar o próximo chamado.
-Assim, "menos chamados em aberto" reflete de fato quem tem menor carga de
-trabalho no momento.
+**Why:** the point is balancing *active* work. A resolved or closed ticket consumes nobody's time
+any more, so it should not influence who receives the next one. Defining it this way makes "fewest
+open tickets" actually mean "lightest current workload".
 
-Essa regra está centralizada em
-[`TicketStatus::openValues()`](app/Enums/TicketStatus.php) e é exercitada pelos
-testes em `tests/Feature/AutoAssignmentTest.php`.
+The rule is centralized in [`TicketStatus::openValues()`](app/Enums/TicketStatus.php) and exercised
+by `tests/Feature/AutoAssignmentTest.php` — including the tie-break and the exclusion of finished
+tickets from the count.
 
 ---
 
-## Pré-requisitos
+## Running it
 
-- **Docker** e **Docker Compose** (Docker Desktop no Windows/Mac).
-- Portas livres: **80** (aplicação) e **3306** (MySQL).
-
-Não é necessário ter PHP, Composer, Node ou MySQL instalados no host — tudo roda
-em containers via Laravel Sail.
-
----
-
-## Como rodar o projeto
-
-> Os comandos abaixo usam `./vendor/bin/sail`. Para encurtar, você pode criar um
-> alias: `alias sail='./vendor/bin/sail'`.
-
-### 1. Clonar e entrar na pasta
-
-```bash
-git clone <url-do-repositorio>
-cd chamados
-```
-
-### 2. Criar o arquivo de ambiente
+Requires **Docker** and **Docker Compose**, with ports **80** and **3306** free. Nothing else needs
+to be installed on the host.
 
 ```bash
 cp .env.example .env
-```
 
-### 3. Instalar as dependências PHP (sem PHP no host)
+# Install PHP dependencies without PHP on the host
+docker run --rm -v "$(pwd):/var/www/html" -w /var/www/html \
+    laravelsail/php83-composer:latest composer install --ignore-platform-reqs
+# On Windows PowerShell, replace $(pwd) with ${PWD}
 
-Como o Composer ainda não rodou, usamos um container só para instalar as
-dependências dentro de `vendor/`:
-
-```bash
-docker run --rm \
-    -v "$(pwd):/var/www/html" \
-    -w /var/www/html \
-    laravelsail/php83-composer:latest \
-    composer install --ignore-platform-reqs
-```
-
-> No Windows (PowerShell), troque `$(pwd)` por `${PWD}`.
-
-### 4. Subir os containers (aplicação + MySQL)
-
-```bash
 ./vendor/bin/sail up -d
-```
-
-Na primeira execução, a imagem é construída — pode levar alguns minutos.
-
-### 5. Gerar a chave da aplicação, migrar e popular o banco
-
-```bash
 ./vendor/bin/sail artisan key:generate
 ./vendor/bin/sail artisan migrate --seed
+./vendor/bin/sail npm install && ./vendor/bin/sail npm run dev
 ```
 
-### 6. Instalar dependências do front e compilar os assets
+The app is then at **http://localhost**.
 
-```bash
-./vendor/bin/sail npm install
-./vendor/bin/sail npm run dev
-```
-
-> `npm run dev` sobe o Vite em modo de desenvolvimento (hot reload). Para um
-> build de produção, use `./vendor/bin/sail npm run build`.
-
-### 7. Acessar
-
-A aplicação fica disponível em **http://localhost** (a raiz redireciona para
-`/chamados`).
-
----
-
-## Rodando os testes
-
-Os testes rodam contra um **SQLite em memória** (rápido e isolado, sem tocar no
-banco MySQL de desenvolvimento):
+### Tests
 
 ```bash
 ./vendor/bin/sail artisan test
 ```
 
-A suíte cobre o CRUD, a validação, os filtros/busca e — com destaque — a regra
-de distribuição automática (menor carga, desempate determinístico e a exclusão
-de chamados concluídos da contagem).
+They run against in-memory SQLite — fast and isolated, without touching the development database.
+The suite covers CRUD, validation, filtering and search, and the auto-assignment rule.
+
+### Seed data
+
+Four agents and eight tickets, **deliberately unbalanced** (one agent overloaded, one with nothing)
+so the effect of automatic assignment is visible immediately: open a new ticket in automatic mode
+and it lands on the idle agent.
 
 ---
 
-## Dados de exemplo
-
-O seed cria:
-
-- **4 responsáveis**: Ana Souza, Bruno Lima, Carla Mendes e Diego Rocha.
-- **8 chamados** inspirados no relato do cliente (computador travando,
-  impressora com defeito, cadeira nova, etc.).
-
-A distribuição é **propositalmente desbalanceada** (Ana sobrecarregada, Diego
-sem nenhum chamado) para que o efeito da distribuição automática fique evidente:
-ao abrir um novo chamado no modo automático, ele tende a cair para o Diego.
-
----
-
-## Estrutura do projeto
+## Project structure
 
 ```
 app/
-├── Actions/
-│   └── AssignLeastBusyAgent.php      # Regra da distribuição automática (SRP)
+├── Actions/AssignLeastBusyAgent.php   # the auto-assignment rule (SRP)
 ├── Enums/
-│   ├── TicketPriority.php            # Prioridades + opções p/ o front
-│   └── TicketStatus.php              # Status + definição de "em aberto"
+│   ├── TicketPriority.php             # priorities + options for the front end
+│   └── TicketStatus.php               # statuses + the definition of "open"
 ├── Http/
 │   ├── Controllers/TicketController.php
-│   ├── Middleware/HandleInertiaRequests.php
-│   ├── Requests/                     # StoreTicketRequest / UpdateTicketRequest
-│   └── Resources/TicketResource.php  # Formatação do chamado p/ o front
+│   ├── Requests/                      # StoreTicketRequest / UpdateTicketRequest
+│   └── Resources/TicketResource.php
 └── Models/
-    ├── Agent.php                     # Responsável + relação openTickets()
-    └── Ticket.php                    # Chamado + scopes de filtro/busca
+    ├── Agent.php                      # agent + openTickets() relation
+    └── Ticket.php                     # ticket + filter/search scopes
 
 resources/js/
 ├── Layouts/AppLayout.vue
-├── Components/                       # TicketForm, Priority/StatusBadge, Pagination
-└── Pages/Tickets/                    # Index, Create, Edit, Show
-
-database/
-├── migrations/                       # agents, tickets
-├── factories/                        # AgentFactory, TicketFactory
-└── seeders/                          # AgentSeeder, TicketSeeder
+├── Components/                        # TicketForm, Priority/StatusBadge, Pagination
+└── Pages/Tickets/                     # Index, Create, Edit, Show
 
 tests/
-├── Feature/                          # TicketManagementTest, AutoAssignmentTest
-└── Unit/                             # TicketStatusTest
+├── Feature/                           # TicketManagementTest, AutoAssignmentTest
+└── Unit/                              # TicketStatusTest
 ```
 
 ---
 
-## Trade-offs e próximos passos
+## Trade-offs, stated plainly
 
-Decisões tomadas conscientemente para manter o escopo enxuto e com qualidade
-(seguindo a orientação "menos features com alta qualidade"):
+Scope was kept deliberately narrow in favour of quality:
 
-- **Sem autenticação/login**: o desafio não exige e os responsáveis não são
-  usuários que logam. O campo "solicitante" é um texto livre. Próximo passo
-  natural: autenticação + papéis (funcionário vs. suporte), o que permitiria
-  preencher o solicitante automaticamente.
-- **Responsáveis sem CRUD próprio**: conforme o enunciado, eles existem via seed
-  e podem ser selecionados. Adicionar um CRUD seria trivial reaproveitando o
-  mesmo padrão dos chamados.
-- **MySQL em produção, SQLite nos testes**: produção-paridade no dia a dia e
-  velocidade/isolamento na suíte. Graças ao Eloquent, trocar de banco é apenas
-  uma mudança no `.env`.
-- **Histórico de mudanças de status**: hoje guardamos apenas o estado atual. Uma
-  evolução útil seria registrar o histórico (auditoria de quem mudou o quê e
-  quando).
+- **No authentication.** Agents are not users who log in, and the requester is free text. The natural
+  next step is auth plus roles (employee vs. support), which would let the requester be filled in
+  automatically.
+- **No CRUD for agents.** They exist via seed and can be selected. Adding one would be trivial,
+  reusing the ticket pattern.
+- **MySQL in production, SQLite in tests.** Production parity day to day, speed and isolation in the
+  suite. Thanks to Eloquent, switching is an `.env` change.
+- **No status history.** Only the current state is stored. Recording the transition history — who
+  changed what, and when — is the useful next evolution.
 
 ---
 
-## Bibliotecas e referências
+## References
 
-Além do Laravel e suas dependências padrão:
-
-- [Inertia.js](https://inertiajs.com/) — adaptador `inertiajs/inertia-laravel` e
-  cliente `@inertiajs/vue3`.
-- [Vue 3](https://vuejs.org/)
-- [Tailwind CSS v4](https://tailwindcss.com/) — via `@tailwindcss/vite`.
-- [Pest](https://pestphp.com/) — framework de testes.
-- [Laravel Sail](https://laravel.com/docs/sail) — ambiente Docker.
-- [Laravel Pint](https://laravel.com/docs/pint) — padronização de estilo do código PHP.
+[Inertia.js](https://inertiajs.com/) · [Vue 3](https://vuejs.org/) ·
+[Tailwind CSS v4](https://tailwindcss.com/) · [Pest](https://pestphp.com/) ·
+[Laravel Sail](https://laravel.com/docs/sail) · [Laravel Pint](https://laravel.com/docs/pint)
